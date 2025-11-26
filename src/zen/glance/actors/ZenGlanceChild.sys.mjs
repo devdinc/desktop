@@ -3,9 +3,11 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 export class ZenGlanceChild extends JSWindowActorChild {
   #activationMethod;
+  #glanceTarget = null;
 
   constructor() {
     super();
+    this.mousemoveCallback = this.mousemoveCallback.bind(this);
   }
 
   async handleEvent(event) {
@@ -80,11 +82,30 @@ export class ZenGlanceChild extends JSWindowActorChild {
     } else if (activationMethod === 'meta' && !event.metaKey) {
       return;
     }
-    if (target) {
+    this.#glanceTarget = target;
+    this.contentWindow.addEventListener('mousemove', this.mousemoveCallback, { once: true });
+  }
+
+  on_mouseup() {
+    if (this.#glanceTarget) {
+      // Don't clear the glance target here, we need it in the click handler
+      // See issue https://github.com/zen-browser/desktop/issues/11409
+      this.#openGlance(this.#glanceTarget);
+    }
+    this.contentWindow.removeEventListener('mousemove', this.mousemoveCallback);
+  }
+
+  on_click(event) {
+    if (this.#glanceTarget) {
       event.preventDefault();
       event.stopPropagation();
+      this.#glanceTarget = null;
+    }
+  }
 
-      this.#openGlance(target);
+  mousemoveCallback() {
+    if (this.#glanceTarget) {
+      this.#glanceTarget = null;
     }
   }
 
