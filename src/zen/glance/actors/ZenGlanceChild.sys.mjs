@@ -4,6 +4,8 @@
 export class ZenGlanceChild extends JSWindowActorChild {
   #activationMethod;
   #glanceTarget = null;
+  #holdDuration;
+  #targetTimeout;
 
   constructor() {
     super();
@@ -17,13 +19,18 @@ export class ZenGlanceChild extends JSWindowActorChild {
     }
   }
 
-  async #initActivationMethod() {
-    this.#activationMethod = await this.sendQuery('ZenGlance:GetActivationMethod');
+  async #initConfig() {
+    const cfg = await this.sendQuery('ZenGlance:GetConfig');
+    this.#activationMethod = cfg.activationMethod;
+    this.#holdDuration = cfg.holdDuration;
   }
 
-  #ensureOnlyKeyModifiers(event) {
-    return !(event.ctrlKey ^ event.altKey ^ event.shiftKey ^ event.metaKey);
-  }
+  #countModifiers(event) {
+    return Number(event.ctrlKey) +
+           Number(event.altKey) +
+           Number(event.shiftKey) +
+           Number(event.metaKey);
+  }  
 
   #openGlance(target) {
     let url = target.href;
@@ -69,20 +76,35 @@ export class ZenGlanceChild extends JSWindowActorChild {
     // The problem is that at that stage we don't know the rect or even what
     // element has been clicked, so we send the data here.
     this.#sendClickDataToParent(target, elementToRecord);
-    if (event.button !== 0 || event.defaultPrevented || this.#ensureOnlyKeyModifiers(event)) {
+    if (event.button !== 0 || event.defaultPrevented) {
       return;
     }
+    const modifiers = this.#countModifiers(event);
+    if (modifiers > 1) {
+      return;
+    }
+
     const activationMethod = this.#activationMethod;
-    if (activationMethod === 'ctrl' && !event.ctrlKey) {
-      return;
-    } else if (activationMethod === 'alt' && !event.altKey) {
-      return;
-    } else if (activationMethod === 'shift' && !event.shiftKey) {
-      return;
-    } else if (activationMethod === 'meta' && !event.metaKey) {
+    let delay = 0;
+    if (
+      (activationMethod === "ctrl"  && !event.ctrlKey)
+      || (activationMethod === "alt"   && !event.altKey)
+      || (activationMethod === "shift" && !event.shiftKey)
+      || (activationMethod === "meta"  && !event.metaKey)
+    ) {
       return;
     }
-    this.#glanceTarget = target;
+    
+    if (activationMethod === "hold") {
+      delay = this.#holdDuration;
+      if (modifiers !== 0) {
+        return;
+      }
+    }
+
+    this.#targetTimeout = setTimeout(() => {
+      this.#glanceTarget = target;
+    }, delay);
     this.contentWindow.addEventListener('mousemove', this.mousemoveCallback, { once: true });
   }
 
@@ -92,6 +114,7 @@ export class ZenGlanceChild extends JSWindowActorChild {
       // See issue https://github.com/zen-browser/desktop/issues/11409
       this.#openGlance(this.#glanceTarget);
     }
+    clearTimeout(this.#targetTimeout);
     this.contentWindow.removeEventListener('mousemove', this.mousemoveCallback);
   }
 
@@ -107,6 +130,7 @@ export class ZenGlanceChild extends JSWindowActorChild {
     if (this.#glanceTarget) {
       this.#glanceTarget = null;
     }
+    clearTimeout(this.#targetTimeout);
   }
 
   on_keydown(event) {
@@ -119,6 +143,6 @@ export class ZenGlanceChild extends JSWindowActorChild {
   }
 
   async on_DOMContentLoaded() {
-    await this.#initActivationMethod();
+    await this.#initConfig();
   }
 }
