@@ -3,13 +3,11 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 export class ZenGlanceChild extends JSWindowActorChild {
   #activationMethod;
-  #glanceTarget = null;
   #holdDuration;
-  #targetTimeout;
+  #shouldGlanceOpen = false;
 
   constructor() {
     super();
-    this.mousemoveCallback = this.mousemoveCallback.bind(this);
   }
 
   async handleEvent(event) {
@@ -66,71 +64,52 @@ export class ZenGlanceChild extends JSWindowActorChild {
     });
   }
 
-  on_mousedown(event) {
+  #getTargetFromEvent(event) {
     // get closest A element
     const target = event.target.closest('A');
     const elementToRecord = event.originalTarget || event.target;
+    return {
+      target,
+      elementToRecord,
+    };
+  }
+
+  on_mousedown(event) {
+    const { target, elementToRecord } = this.#getTargetFromEvent(event);
     // We record the link data anyway, even if the glance may be invoked
     // or not. We have some cases where glance would open, for example,
     // when clicking on a link with a different domain where glance would open.
     // The problem is that at that stage we don't know the rect or even what
     // element has been clicked, so we send the data here.
     this.#sendClickDataToParent(target, elementToRecord);
-    if (event.button !== 0 || event.defaultPrevented) {
+    this.#shouldGlanceOpen = false;
+    setTimeout(() => {
+      this.#shouldGlanceOpen = true;
+    }, (this.#activationMethod === 'hold') ? this.#holdDuration : 0);
+  }
+
+  on_click(event) {
+    if (event.button !== 0 || event.defaultPrevented || !this.#shouldGlanceOpen) {
       return;
     }
+    const { target } = this.#getTargetFromEvent(event);
     const modifiers = this.#countModifiers(event);
     if (modifiers > 1) {
       return;
     }
-
     const activationMethod = this.#activationMethod;
-    let delay = 0;
     if (
       (activationMethod === "ctrl"  && !event.ctrlKey)
       || (activationMethod === "alt"   && !event.altKey)
       || (activationMethod === "shift" && !event.shiftKey)
       || (activationMethod === "meta"  && !event.metaKey)
+      || (activationMethod === "hold"  && modifiers !== 0)
     ) {
       return;
-    }
-    
-    if (activationMethod === "hold") {
-      delay = this.#holdDuration;
-      if (modifiers !== 0) {
-        return;
-      }
-    }
-
-    this.#targetTimeout = setTimeout(() => {
-      this.#glanceTarget = target;
-    }, delay);
-    this.contentWindow.addEventListener('mousemove', this.mousemoveCallback, { once: true });
-  }
-
-  on_mouseup() {
-    if (this.#glanceTarget) {
-      // Don't clear the glance target here, we need it in the click handler
-      // See issue https://github.com/zen-browser/desktop/issues/11409
-      this.#openGlance(this.#glanceTarget);
-    }
-    clearTimeout(this.#targetTimeout);
-    this.contentWindow.removeEventListener('mousemove', this.mousemoveCallback);
-  }
-
-  on_click(event) {
-    if (this.#glanceTarget) {
-      event.preventDefault();
-      event.stopPropagation();
-      this.#glanceTarget = null;
-    }
-  }
-
-  mousemoveCallback() {
-    if (this.#glanceTarget) {
-      this.#glanceTarget = null;
-    }
-    clearTimeout(this.#targetTimeout);
+    } 
+    event.preventDefault();
+    event.stopPropagation();
+    this.#openGlance(target);
   }
 
   on_keydown(event) {
